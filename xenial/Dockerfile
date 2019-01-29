@@ -79,7 +79,7 @@ RUN echo 'deb http://mirrors.aliyun.com/ubuntu/ xenial-updates main restricted u
 RUN echo 'deb http://mirrors.aliyun.com/ubuntu/ xenial-backports main restricted universe multiverse' >> /etc/apt/sources.list
 
 RUN DEBIAN_FRONTEND=noninteractive apt-get update \
-    && apt-get install -y --no-install-recommends \
+    && apt-get install -y --no-install-recommends --fix-missing \
         ca-certificates \
         build-essential \
         ca-certificates \
@@ -96,8 +96,11 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get update \
         perl \
         unzip \
         zlib1g-dev \
+        graphicsmagick \
+        locales \
         ${RESTY_ADD_PACKAGE_BUILDDEPS} \
         ${RESTY_ADD_PACKAGE_RUNDEPS} \
+    && apt-get autoremove -y \
     && cd /tmp \
     && if [ -n "${RESTY_EVAL_PRE_CONFIGURE}" ]; then eval $(echo ${RESTY_EVAL_PRE_CONFIGURE}); fi \
     && curl -fSL https://www.openssl.org/source/openssl-${RESTY_OPENSSL_VERSION}.tar.gz -o openssl-${RESTY_OPENSSL_VERSION}.tar.gz \
@@ -108,11 +111,8 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get update \
     && tar xzf openresty-${RESTY_VERSION}.tar.gz \
     && curl -fSL https://github.com/happyfish100/fastdfs-nginx-module/archive/V${FASTDFS_NGINX_MODULE_VERSION}.tar.gz -o fastdfs-nginx-module-${FASTDFS_NGINX_MODULE_VERSION}.tar.gz \
     && tar xzf fastdfs-nginx-module-${FASTDFS_NGINX_MODULE_VERSION}.tar.gz \
-    && sed 's/usr\/local\/include/usr\/include\/fastcommon/g' fastdfs-nginx-module-${FASTDFS_NGINX_MODULE_VERSION}/src/config >> tmp \
-    && mv tmp fastdfs-nginx-module-${FASTDFS_NGINX_MODULE_VERSION}/src/config
-    
-RUN DEBIAN_FRONTEND=noninteractive \
-    && cd /tmp \
+    && sed 's/usr\/local\/include/usr\/include\/fastcommon/g' fastdfs-nginx-module-${FASTDFS_NGINX_MODULE_VERSION}/src/config >> tmpConfig \
+    && mv tmpConfig fastdfs-nginx-module-${FASTDFS_NGINX_MODULE_VERSION}/src/config \
     && curl -fSL https://github.com/happyfish100/libfastcommon/archive/V${FASTDFS_COMMON_VERSION}.tar.gz -o libfastcommon-${FASTDFS_COMMON_VERSION}.tar.gz \
     && tar xzf libfastcommon-${FASTDFS_COMMON_VERSION}.tar.gz \
     && cd /tmp/libfastcommon-${FASTDFS_COMMON_VERSION} \
@@ -123,9 +123,7 @@ RUN DEBIAN_FRONTEND=noninteractive \
     && tar xzf fastdfs-${FASTDFS_VERSION}.tar.gz \
     && cd /tmp/fastdfs-${FASTDFS_VERSION} \
     && ./make.sh \
-    && ./make.sh install
-
-RUN DEBIAN_FRONTEND=noninteractive \
+    && ./make.sh install \
     && cd /tmp/openresty-${RESTY_VERSION} \
     && ./configure -j${RESTY_J} ${_RESTY_CONFIG_DEPS} ${RESTY_CONFIG_OPTIONS} ${RESTY_CONFIG_OPTIONS_MORE} \
     && make -j${RESTY_J} \
@@ -135,14 +133,6 @@ RUN DEBIAN_FRONTEND=noninteractive \
     && cp fastdfs-nginx-module-${FASTDFS_NGINX_MODULE_VERSION}/src/mod_fastdfs.conf /etc/fdfs/ \
     && cp fastdfs-${FASTDFS_VERSION}/conf/http.conf /etc/fdfs/ \
     && cp fastdfs-${FASTDFS_VERSION}/conf/mime.types /etc/fdfs/ \
-    && rm -rf \
-        openssl-${RESTY_OPENSSL_VERSION} \
-        openssl-${RESTY_OPENSSL_VERSION}.tar.gz \
-        openresty-${RESTY_VERSION}.tar.gz openresty-${RESTY_VERSION} \
-        pcre-${RESTY_PCRE_VERSION}.tar.gz pcre-${RESTY_PCRE_VERSION} \
-        fastdfs-nginx-module-${FASTDFS_NGINX_MODULE_VERSION}.tar.gz fastdfs-nginx-module-${FASTDFS_NGINX_MODULE_VERSION} \
-        libfastcommon-${FASTDFS_COMMON_VERSION}.tar.gz libfastcommon-${FASTDFS_COMMON_VERSION} \
-        fastdfs-${FASTDFS_VERSION}.tar.gz fastdfs-${FASTDFS_VERSION} \
     && curl -fSL https://github.com/luarocks/luarocks/archive/${RESTY_LUAROCKS_VERSION}.tar.gz -o luarocks-${RESTY_LUAROCKS_VERSION}.tar.gz \
     && tar xzf luarocks-${RESTY_LUAROCKS_VERSION}.tar.gz \
     && cd luarocks-${RESTY_LUAROCKS_VERSION} \
@@ -153,14 +143,13 @@ RUN DEBIAN_FRONTEND=noninteractive \
         --with-lua-include=/usr/local/openresty/luajit/include/luajit-2.1 \
     && make build \
     && make install \
-    && apt-get install -y --no-install-recommends graphicsmagick locales \
     && cd /tmp \
     && if [ -n "${RESTY_EVAL_POST_MAKE}" ]; then eval $(echo ${RESTY_EVAL_POST_MAKE}); fi \
-    && rm -rf luarocks-${RESTY_LUAROCKS_VERSION} luarocks-${RESTY_LUAROCKS_VERSION}.tar.gz \
     && if [ -n "${RESTY_ADD_PACKAGE_BUILDDEPS}" ]; then DEBIAN_FRONTEND=noninteractive apt-get remove --purge "${RESTY_ADD_PACKAGE_BUILDDEPS}" ; fi \
-    && DEBIAN_FRONTEND=noninteractive apt-get autoremove -y \
     && ln -sf /dev/stdout /usr/local/openresty/nginx/logs/access.log \
-    && ln -sf /dev/stderr /usr/local/openresty/nginx/logs/error.log
+    && ln -sf /dev/stderr /usr/local/openresty/nginx/logs/error.log \
+    && rm -rf /var/lib/apt/lists/* \
+	&& rm -rf /tmp/*
 
 # Add additional binaries into PATH for convenience
 ENV PATH=$PATH:/usr/local/openresty/luajit/bin:/usr/local/openresty/nginx/sbin:/usr/local/openresty/bin
@@ -169,18 +158,12 @@ ENV PATH=$PATH:/usr/local/openresty/luajit/bin:/usr/local/openresty/nginx/sbin:/
 # If OpenResty changes, these may need updating:
 #    /usr/local/openresty/bin/resty -e 'print(package.path)'
 #    /usr/local/openresty/bin/resty -e 'print(package.cpath)'
-ENV LUA_PATH="/usr/local/openresty/site/lualib/?.ljbc;/usr/local/openresty/site/lualib/?/init.ljbc;/usr/local/openresty/lualib/?.ljbc;/usr/local/openresty/lualib/?/init.ljbc;/usr/local/openresty/site/lualib/?.lua;/usr/local/openresty/site/lualib/?/init.lua;/usr/local/openresty/lualib/?.lua;/usr/local/openresty/lualib/?/init.lua;./?.lua;/usr/local/openresty/luajit/share/luajit-2.1.0-beta3/?.lua;/usr/local/share/lua/5.1/?.lua;/usr/local/share/lua/5.1/?/init.lua;/usr/local/openresty/luajit/share/lua/5.1/?.lua;/usr/local/openresty/luajit/share/lua/5.1/?/init.lua"
-
+ENV LUA_PATH="/data/lua/?.lua;/usr/local/openresty/site/lualib/?.ljbc;/usr/local/openresty/site/lualib/?/init.ljbc;/usr/local/openresty/lualib/?.ljbc;/usr/local/openresty/lualib/?/init.ljbc;/usr/local/openresty/site/lualib/?.lua;/usr/local/openresty/site/lualib/?/init.lua;/usr/local/openresty/lualib/?.lua;/usr/local/openresty/lualib/?/init.lua;./?.lua;/usr/local/openresty/luajit/share/luajit-2.1.0-beta3/?.lua;/usr/local/share/lua/5.1/?.lua;/usr/local/share/lua/5.1/?/init.lua;/usr/local/openresty/luajit/share/lua/5.1/?.lua;/usr/local/openresty/luajit/share/lua/5.1/?/init.lua"
 ENV LUA_CPATH="/usr/local/openresty/site/lualib/?.so;/usr/local/openresty/lualib/?.so;./?.so;/usr/local/lib/lua/5.1/?.so;/usr/local/openresty/luajit/lib/lua/5.1/?.so;/usr/local/lib/lua/5.1/loadall.so;/usr/local/openresty/luajit/lib/lua/5.1/?.so"
-
 
 # Copy nginx configuration files
 COPY nginx.conf /usr/local/openresty/nginx/conf/nginx.conf
 COPY nginx.vh.default.conf /etc/nginx/conf.d/default.conf
-
-RUN apt-get purge -y --auto-remove python gcc g++ make \
-	&& rm -rf /var/lib/apt/lists/* \
-	&& rm -rf /tmp/*
 
 ### common setup ###
 COPY locale.gen /etc/
